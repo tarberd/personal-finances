@@ -262,25 +262,46 @@ function create_monthly_income_statement(
   // }
   
   const ledger_by_date = {
-    entires: new Map<[number, number], [LedgerEntry]>,
+    entries: new Map<[number, number], [LedgerEntry]>,
   }
-  
   for (const entry of ledger.entries) {
-    const entry_month = entry.date.getMonth();
-    const entry_year = entry.date.getFullYear();
-    const entries = ledger_by_date.entires.get([entry_month, entry_year]);
+    const key: [number, number] = [entry.date.getMonth(), entry.date.getFullYear()];
+    const entries = ledger_by_date.entries.get(key);
     if (entries !== undefined) {
       entries.push(entry);
     } else {
-      ledger_by_date.entires.set([entry_month, entry_year], [entry]);
+      ledger_by_date.entries.set(key, [entry]);
     }
   }
+  // for (const [key, entries] of ledger_by_date.entries) {
+  //   ret.push([key.toString()])
+  //   for(const entry of entries) {
+  //     if (entry.data.kind === "default") {
+  //       ret.push([entry.date.toDateString(), entry.description, entry.data.credit_account.name, entry.data.debit_account.name, entry.data.currency, entry.data.value.toString() ]);
+  //     }
+  //     if (entry.data.kind === "liability") {
+  //       ret.push([entry.date.toDateString(), entry.description, entry.data.credit_account.name, entry.data.debit_account.name, entry.data.currency, entry.data.value.toString(), entry.data.payment_term.toDateString() ]);
+  //     }
+  //     if (entry.data.kind === "exchange") {
+  //       ret.push([
+  //         entry.date.toDateString(),
+  //         entry.description,
+  //         entry.data.credit_account.name,
+  //         entry.data.debit_account.name,
+  //         entry.data.debit_currency,
+  //         entry.data.debit_value.toString(),
+  //         entry.data.credit_account.name,
+  //         entry.data.credit_value.toString(),
+  //         entry.data.exchange_account.name]);
+  //     }
+  //   }
+  // }
 
   const begin_date = ledger.entries[0].date;
   const begin_month = begin_date.getMonth(); 
   const begin_year = begin_date.getFullYear(); 
-  const end_date = ledger.entries[-1].date;
-  const roll_over = end_date.getMonth() + 1 === 13; 
+  const end_date = ledger.entries[ledger.entries.length - 1].date;
+  const roll_over = end_date.getMonth() + 1 === 12; 
   const end_month = roll_over ? 0 : end_date.getMonth() + 1;
   const end_year = roll_over ? end_date.getFullYear() + 1 : end_date.getFullYear(); 
   
