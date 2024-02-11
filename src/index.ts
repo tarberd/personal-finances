@@ -131,10 +131,15 @@ type Ledger = {
 }
 
 type AccountEntry = {
-  date: Date,
-  description: string,
+  account: Account
   type: "debit" | "credit",
+  currency: string,
   value: number,
+}
+
+type MonthlyAccountingPeriod = {
+  month: number,
+  year: number,
 }
 
 function make_ledger(account_tree: AccountTree, ledger_tables: string[][][]): Ledger {
@@ -230,13 +235,14 @@ function make_ledger(account_tree: AccountTree, ledger_tables: string[][][]): Le
   return ledger;
 }
 
+type SheetsReturnType = String | Date | number;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function create_monthly_income_statement(
   account_types: string[][],
   account_table: string[][],
   currencies_table: string[][],
   ...ledger_tables: string[][][]
-): any[][] {
+): SheetsReturnType[][] {
   const currencies = new Array<string>;
   for (const currency_entry of currencies_table.filter(non_empty_row_filter)) {
     currencies.push(currency_entry[0]);
@@ -245,170 +251,65 @@ function create_monthly_income_statement(
   const ret: string[][] = [];
   
   const account_tree = make_account_tree(account_table, account_types);
-  // for (const [account, info] of account_tree.root_accounts) {
-  //   let account_list: string[] = [];
-  //   collect_account_names(account_list, null, account);
-  //   for (const name of account_list) {
-  //     ret.push([name, info.kind, info.statement]);
-  //   }
-  // }
   
   const ledger = make_ledger(account_tree, ledger_tables);
-  // for (const entry of ledger.entries) {
-  //   if (entry.data.kind === "default") {
-  //     ret.push([entry.date.toDateString(), entry.description, entry.data.credit_account.name, entry.data.debit_account.name, entry.data.currency, entry.data.value.toString() ]);
-  //   }
-  //   if (entry.data.kind === "liability") {
-  //     ret.push([entry.date.toDateString(), entry.description, entry.data.credit_account.name, entry.data.debit_account.name, entry.data.currency, entry.data.value.toString(), entry.data.payment_term.toDateString() ]);
-  //   }
-  //   if (entry.data.kind === "exchange") {
-  //     ret.push([
-  //       entry.date.toDateString(),
-  //       entry.description,
-  //       entry.data.credit_account.name,
-  //       entry.data.debit_account.name,
-  //       entry.data.debit_currency,
-  //       entry.data.debit_value.toString(),
-  //       entry.data.credit_account.name,
-  //       entry.data.credit_value.toString(),
-  //       entry.data.exchange_account.name]);
-  //   }
-  // }
   
-  const ledger_by_date = {
-    entries: new Map<[number, number], LedgerEntry[]>,
-  }
-  for (const entry of ledger.entries) {
-    const key: [number, number] = [entry.date.getMonth(), entry.date.getFullYear()];
-    const entries = ledger_by_date.entries.get(key);
-    if (entries !== undefined) {
-      entries.push(entry);
-    } else {
-      ledger_by_date.entries.set(key, [entry]);
+  const ledger_by_date = ledger.entries.map((entry) => {
+    const period = {month: entry.date.getMonth(), year: entry.date.getFullYear()};
+    return { period, entry };
+  });
+  
+  const ledger_by_date_and_account = ledger_by_date.flatMap(({period, entry}) => {
+    const kind = entry.data.kind;
+    if (kind === "default" || kind === "liability") {
+      const credit_entry: AccountEntry = {
+        account: entry.data.credit_account,
+        type: "credit",
+        currency: entry.data.currency,
+        value: entry.data.value,
+      };
+      const debit_entry: AccountEntry = {
+        account: entry.data.debit_account,
+        type: "debit",
+        currency: entry.data.currency,
+        value: entry.data.value,
+      };
+      const credit = {period, original_entry: entry, account_entry: credit_entry};
+      const debit = {period, original_entry: entry, account_entry: debit_entry};
+      return [credit, debit];
+    } else if (kind === "exchange") {
+      const credit_entry: AccountEntry = {
+        account: entry.data.credit_account,
+        type: "credit",
+        currency: entry.data.credit_currency,
+        value: entry.data.credit_value,
+      };
+      const debit_entry: AccountEntry = {
+        account: entry.data.debit_account,
+        type: "debit",
+        currency: entry.data.debit_currency,
+        value: entry.data.debit_value,
+      };
+      const exchange_debit_entry: AccountEntry = {
+        account: entry.data.exchange_account,
+        type: "debit",
+        currency: entry.data.credit_currency,
+        value: entry.data.credit_value,
+      };
+      const exchange_credit_entry: AccountEntry = {
+        account: entry.data.exchange_account,
+        type: "credit",
+        currency: entry.data.debit_currency,
+        value: entry.data.debit_value,
+      };
+      const credit = {period, original_entry: entry, account_entry: credit_entry};
+      const debit = {period, original_entry: entry, account_entry: debit_entry};
+      const exchange_credit = {period, original_entry: entry, account_entry: exchange_credit_entry};
+      const exchange_debit = {period, original_entry: entry, account_entry: exchange_debit_entry};
+      return [credit, debit, exchange_credit, exchange_debit];
     }
-  }
-  // for (const [key, entries] of ledger_by_date.entries) {
-  //   ret.push([key.toString()])
-  //   for(const entry of entries) {
-  //     if (entry.data.kind === "default") {
-  //       ret.push([entry.date.toDateString(), entry.description, entry.data.credit_account.name, entry.data.debit_account.name, entry.data.currency, entry.data.value.toString() ]);
-  //     }
-  //     if (entry.data.kind === "liability") {
-  //       ret.push([entry.date.toDateString(), entry.description, entry.data.credit_account.name, entry.data.debit_account.name, entry.data.currency, entry.data.value.toString(), entry.data.payment_term.toDateString() ]);
-  //     }
-  //     if (entry.data.kind === "exchange") {
-  //       ret.push([
-  //         entry.date.toDateString(),
-  //         entry.description,
-  //         entry.data.credit_account.name,
-  //         entry.data.debit_account.name,
-  //         entry.data.debit_currency,
-  //         entry.data.debit_value.toString(),
-  //         entry.data.credit_account.name,
-  //         entry.data.credit_value.toString(),
-  //         entry.data.exchange_account.name]);
-  //     }
-  //   }
-  // }
-  
-  const key_hash = (account: Account, currency: string, date: [number, number]): string => `${account.name}-${currency}-${date.toString()}`;
-  const ledger_by_date_and_account = {
-    entries: new Map<string, AccountEntry[]>, 
-  };
-  
-  for (const [key, ledger_entries] of ledger_by_date.entries) {
-    for (const ledger_entry of ledger_entries) {
-      const kind = ledger_entry.data.kind;
-      if (kind === "default" || kind === "liability") {
-        const currency = ledger_entry.data.currency;
-        const credit_acc = ledger_entry.data.credit_account;
-        const credit_entry: AccountEntry = {
-          date: ledger_entry.date,
-          description: ledger_entry.description,
-          type: "credit",
-          value: ledger_entry.data.value,
-        };
-
-        const credit_account_entries = ledger_by_date_and_account.entries.get(key_hash(credit_acc, currency, key));
-        if (credit_account_entries !== undefined) {
-          credit_account_entries.push(credit_entry);
-        } else {
-          ledger_by_date_and_account.entries.set(key_hash(credit_acc, currency, key), [credit_entry]);
-        }
-
-        const debit_acc = ledger_entry.data.debit_account;
-        const debit_entry: AccountEntry = {
-          date: ledger_entry.date,
-          description: ledger_entry.description,
-          type: "debit",
-          value: ledger_entry.data.value,
-        };
-
-        const debit_account_entries = ledger_by_date_and_account.entries.get(key_hash(debit_acc, currency, key));
-        if (debit_account_entries !== undefined) {
-          debit_account_entries.push(debit_entry);
-        } else {
-          ledger_by_date_and_account.entries.set(key_hash(debit_acc, currency, key), [debit_entry]);
-        }
-      } else if (kind === "exchange") {
-        const credit_currency = ledger_entry.data.credit_currency;
-        const credit_acc = ledger_entry.data.credit_account;
-        const credit_entry: AccountEntry = {
-          date: ledger_entry.date,
-          description: ledger_entry.description,
-          type: "credit",
-          value: ledger_entry.data.credit_value,
-        };
-        const credit_account_entries = ledger_by_date_and_account.entries.get(key_hash(credit_acc, credit_currency, key));
-        if (credit_account_entries !== undefined) {
-          credit_account_entries.push(credit_entry);
-        } else {
-          ledger_by_date_and_account.entries.set(key_hash(credit_acc, credit_currency, key), [credit_entry]);
-        }
-
-        const debit_currency = ledger_entry.data.debit_currency;
-        const debit_acc = ledger_entry.data.debit_account;
-        const debit_entry: AccountEntry = {
-          date: ledger_entry.date,
-          description: ledger_entry.description,
-          type: "debit",
-          value: ledger_entry.data.debit_value,
-        };
-        const debit_account_entries = ledger_by_date_and_account.entries.get(key_hash(debit_acc, debit_currency, key));
-        if (debit_account_entries !== undefined) {
-          debit_account_entries.push(debit_entry);
-        } else {
-          ledger_by_date_and_account.entries.set(key_hash(debit_acc, debit_currency, key), [debit_entry]);
-        }
-
-        const exchange_account = ledger_entry.data.exchange_account;
-        const exchange_debit_entry: AccountEntry = {
-          date: ledger_entry.date,
-          description: ledger_entry.description,
-          type: "debit",
-          value: ledger_entry.data.credit_value,
-        };
-        const exchange_debit_account_entries = ledger_by_date_and_account.entries.get(key_hash(exchange_account, credit_currency, key));
-        if (exchange_debit_account_entries !== undefined) {
-          exchange_debit_account_entries.push(exchange_debit_entry);
-        } else {
-          ledger_by_date_and_account.entries.set(key_hash(exchange_account, credit_currency, key), [exchange_debit_entry]);
-        }
-        const exchange_credit_entry: AccountEntry = {
-          date: ledger_entry.date,
-          description: ledger_entry.description,
-          type: "credit",
-          value: ledger_entry.data.debit_value,
-        };
-        const exchange_credit_account_entries = ledger_by_date_and_account.entries.get(key_hash(exchange_account, debit_currency, key));
-        if (exchange_credit_account_entries !== undefined) {
-          exchange_credit_account_entries.push(exchange_credit_entry);
-        } else {
-          ledger_by_date_and_account.entries.set(key_hash(exchange_account, debit_currency, key), [exchange_credit_entry]);
-        }
-      }
-    }
-  }
+    return [];
+  });
   
   const begin_date = ledger.entries[0].date;
   const begin_month = begin_date.getMonth(); 
@@ -422,7 +323,7 @@ function create_monthly_income_statement(
   
   for (const currency of currencies) {
     ret.push(["currency", currency]);
-    const months = [...generate_months(begin, end)].reverse();
+    const months = [...generate_accounting_periods(begin, end)].reverse();
     const months_header: any[] = [""];
     for (const [month, year] of months) {
       months_header.push(new Date(year, month))
@@ -432,8 +333,11 @@ function create_monthly_income_statement(
       if (account_type.statement === "income_statement") {
         pre_order_traversal(account, (acc) => {
           const ret_entry: any[] = [acc.name];
-          for (const key of months) {
-            const entries = ledger_by_date_and_account.entries.get(key_hash(acc, currency, key));
+          for (const [month, year] of months) {
+            // const entries = ledger_by_date_and_account.entries.get(key_hash(acc, currency, key));
+            const entries = ledger_by_date_and_account.filter(({period, original_entry, account_entry}) => {
+              //TODO
+            });
             let total = 0;
             if(entries !== undefined) {
               for(const entry of entries) {
@@ -463,7 +367,7 @@ function create_monthly_income_statement(
   return ret;
 }
 
-function *generate_months(
+function *generate_accounting_periods(
   [begin_month, begin_year]: [number, number],
   [end_month, end_year]: [number, number]
   ): IterableIterator<[number, number]> {
