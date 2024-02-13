@@ -1,413 +1,431 @@
 type Account = {
-  name: string,
-  children: Account[],
-}
+  name: string;
+  children: Account[];
+};
 
-const new_root_acc = (name: string): Account => {
-  return {name: name, children: []};
-}
+const newRootAcc = (name: string): Account => {
+  return { name: name, children: [] };
+};
 
-const is_subaccount = (parent: Account, child: Account): boolean => {
-  return find_account(parent, child.name) !== null;
+const isSubaccount = (parent: Account, child: Account): boolean => {
+  return findAccount(parent, child.name) !== null;
 };
 
 type RootAccountInfo = {
-  kind: "normal_credit" | "normal_debit",
-  statement: "balance_sheet" | "income_statement",
-}
+  kind: 'normalCredit' | 'normalDebit';
+  statement: 'balanceSheet' | 'incomeStatement';
+};
 
 type AccountTree = {
-  root_accounts: [Account, RootAccountInfo][], 
-}
+  rootAccounts: [Account, RootAccountInfo][];
+};
 
-const non_empty_cell_filter = (cell: string): boolean => cell !== "";
-const non_empty_row_filter = (row: string[]): boolean => row[0] !== "";
+const nonEmptyCellFilter = (cell: string): boolean => cell !== '';
+const nonEmptyRowFilter = (row: string[]): boolean => row[0] !== '';
 
-const pre_order_traversal = (account: Account, f: (account: Account) => any) => {
+const preOrderTraversal = (account: Account, f: (account: Account) => void) => {
   f(account);
   for (const child of account.children) {
-    pre_order_traversal(child, f);
+    preOrderTraversal(child, f);
   }
-}
+};
 
-const find_account = (account: Account, name: string): Account | null => {
+const findAccount = (account: Account, name: string): Account | null => {
   for (const child of account.children) {
     if (child.name === name) {
       return child;
     } else {
-      const acc = find_account(child, name)
+      const acc = findAccount(child, name);
       if (acc !== null) {
         return acc;
       }
     }
   }
   return null;
-}
+};
 
-const find_account_in_account_tree = (account_tree: AccountTree, name: string): Account | null => {
-  for (const [account, ] of account_tree.root_accounts) {
+const findAccountInAccountTree = (accountTree: AccountTree, name: string): Account | null => {
+  for (const [account] of accountTree.rootAccounts) {
     if (account.name === name) {
       return account;
     } else {
-      const acc = find_account(account, name)
+      const acc = findAccount(account, name);
       if (acc !== null) {
         return acc;
       }
     }
   }
   return null;
-}
+};
 
-function add_account_table_entry_to_account(account: Account, account_table_entry: string[]) {
-  if (account_table_entry.length === 0) {
+function addAccountTableEntryToAccount(account: Account, accountTableEntry: string[]) {
+  if (accountTableEntry.length === 0) {
     return;
   }
-  let new_account_name = account_table_entry[0]
-  let entry = account.children.find((acc) => acc.name === new_account_name);
+  const newAccountName = accountTableEntry[0];
+  const entry = account.children.find((acc) => acc.name === newAccountName);
   if (entry === undefined) {
-    let new_account = new_root_acc(new_account_name);
-    add_account_table_entry_to_account(new_account, account_table_entry.slice(1));
-    account.children.push(new_account);
+    const newAccount = newRootAcc(newAccountName);
+    addAccountTableEntryToAccount(newAccount, accountTableEntry.slice(1));
+    account.children.push(newAccount);
   } else {
-    add_account_table_entry_to_account(entry, account_table_entry.slice(1));
+    addAccountTableEntryToAccount(entry, accountTableEntry.slice(1));
   }
 }
 
-function add_account_table_entry_to_account_tree(account_tree: AccountTree, account_table_entry: string[]){
-  const maybe = account_tree.root_accounts.find(([acc, ]) => acc.name === account_table_entry.at(0));
+function addAccountTableEntryToAccountTree(accountTree: AccountTree, accountTableEntry: string[]) {
+  const maybe = accountTree.rootAccounts.find(([acc]) => acc.name === accountTableEntry.at(0));
   if (maybe === undefined) {
     return;
   }
-  let [account, ] = maybe;
-  add_account_table_entry_to_account(account, account_table_entry.slice(1));
+  const [account] = maybe;
+  addAccountTableEntryToAccount(account, accountTableEntry.slice(1));
 }
 
-function make_account_tree(account_table: string[][], account_types: string[][]): AccountTree {
-  let account_tree: AccountTree = {
-    root_accounts: []
+function makeAccountTree(accountTable: string[][], accountTypes: string[][]): AccountTree {
+  const accountTree: AccountTree = {
+    rootAccounts: [],
   };
-  for (const [root_acc_name, account_normality, is_part_of_net_revenue] of account_types.filter(non_empty_row_filter)) {
-    let kind: "normal_credit" | "normal_debit" = account_normality === "Credit" ? "normal_credit" : "normal_debit";
-    let statement: "balance_sheet" | "income_statement" = is_part_of_net_revenue === "Yes" ? "income_statement" : "balance_sheet";
-    account_tree.root_accounts.push([new_root_acc(root_acc_name), {kind: kind, statement: statement}]);
+  for (const [rootAccName, accountNormality, isPartOfNetRevenue] of accountTypes.filter(
+    nonEmptyRowFilter,
+  )) {
+    const kind: 'normalCredit' | 'normalDebit' =
+      accountNormality === 'Credit' ? 'normalCredit' : 'normalDebit';
+    const statement: 'balanceSheet' | 'incomeStatement' =
+      isPartOfNetRevenue === 'Yes' ? 'incomeStatement' : 'balanceSheet';
+    accountTree.rootAccounts.push([newRootAcc(rootAccName), { kind: kind, statement: statement }]);
   }
 
-  for (const account_table_entry of account_table.filter(non_empty_row_filter)) {
-    add_account_table_entry_to_account_tree(account_tree, account_table_entry.filter(non_empty_cell_filter))
+  for (const accountTableEntry of accountTable.filter(nonEmptyRowFilter)) {
+    addAccountTableEntryToAccountTree(accountTree, accountTableEntry.filter(nonEmptyCellFilter));
   }
-  return account_tree;
+  return accountTree;
 }
 
-type LedgerEntryData = {
-  kind: "default",
-  debit_account: Account,
-  credit_account: Account,
-  currency: string,
-  value: number,
-} | 
-{
-  kind: "liability",
-  debit_account: Account,
-  credit_account: Account,
-  currency: string,
-  value: number,
-  payment_term: Date,
-} |
-{
-  kind: "exchange",
-  debit_account: Account,
-  credit_account: Account,
-  exchange_account: Account,
-  debit_value: number,
-  debit_currency: string,
-  credit_value: number,
-  credit_currency: string,
-}
+type LedgerEntryData =
+  | {
+      kind: 'default';
+      debitAccount: Account;
+      creditAccount: Account;
+      currency: string;
+      value: number;
+    }
+  | {
+      kind: 'liability';
+      debitAccount: Account;
+      creditAccount: Account;
+      currency: string;
+      value: number;
+      paymentTerm: Date;
+    }
+  | {
+      kind: 'exchange';
+      debitAccount: Account;
+      creditAccount: Account;
+      exchangeAccount: Account;
+      debitValue: number;
+      debitCurrency: string;
+      creditValue: number;
+      creditCurrency: string;
+    };
 
 type LedgerEntry = {
-  date: Date,
-  description: string,
-  data: LedgerEntryData,
-}
+  date: Date;
+  description: string;
+  data: LedgerEntryData;
+};
 
 type Ledger = {
-  entries: LedgerEntry[],
-}
+  entries: LedgerEntry[];
+};
 
 type AccountEntry = {
-  account: Account
-  type: "debit" | "credit",
-  currency: string,
-  value: number,
-}
+  account: Account;
+  type: 'debit' | 'credit';
+  currency: string;
+  value: number;
+};
 
 type MonthlyAccountingPeriod = {
-  month: number,
-  year: number,
-}
+  month: number;
+  year: number;
+};
 
-function make_ledger(account_tree: AccountTree, ledger_tables: string[][][]): Ledger {
-  const ledger = {
-    entries: new Array<LedgerEntry>,
+function makeLedger(accountTree: AccountTree, ledgerTables: string[][][]): Ledger {
+  const ledger: Ledger = {
+    entries: [],
   };
 
-  for (const ledger_table of ledger_tables) {
-    const ledger_table_entries = ledger_table.filter(non_empty_row_filter).values();
-    const header = ledger_table_entries.next();
+  for (const ledgerTable of ledgerTables) {
+    const ledgerTableEntries = ledgerTable.filter(nonEmptyRowFilter).values();
+    const header = ledgerTableEntries.next();
     if (header.done === false) {
-      const [, ledger_type, , currency] = header.value;
-      ledger_table_entries.next();
-      if (ledger_type === "General Ledger") {
-        for (const entry of ledger_table_entries){
-          const [date, description, debit_account_name, credit_account_name, value] = entry;
-          const debit_account = find_account_in_account_tree(account_tree, debit_account_name);
-          const credit_account = find_account_in_account_tree(account_tree, credit_account_name);
-          if (debit_account !== null && credit_account !== null ) {
-            const ledger_entry: LedgerEntry = {
+      const [, ledgerType, , currency] = header.value;
+      ledgerTableEntries.next();
+      if (ledgerType === 'General Ledger') {
+        for (const entry of ledgerTableEntries) {
+          const [date, description, debitAccountName, creditAccountName, value] = entry;
+          const debitAccount = findAccountInAccountTree(accountTree, debitAccountName);
+          const creditAccount = findAccountInAccountTree(accountTree, creditAccountName);
+          if (debitAccount !== null && creditAccount !== null) {
+            const ledgerEntry: LedgerEntry = {
               date: new Date(date),
               description: description,
               data: {
-                kind: "default",
-                debit_account,
-                credit_account,
+                kind: 'default',
+                debitAccount,
+                creditAccount,
                 currency,
                 value: +value,
               },
             };
-            ledger.entries.push(ledger_entry);
+            ledger.entries.push(ledgerEntry);
           }
         }
-      } else if (ledger_type === "Liability Ledger") {
-        for (const entry of ledger_table_entries){
-          const [date, description, debit_account_name, credit_account_name, value, term] = entry;
-          const debit_account = find_account_in_account_tree(account_tree, debit_account_name);
-          const credit_account = find_account_in_account_tree(account_tree, credit_account_name);
-          if (debit_account !== null && credit_account !== null ) {
-            const ledger_entry: LedgerEntry = {
+      } else if (ledgerType === 'Liability Ledger') {
+        for (const entry of ledgerTableEntries) {
+          const [date, description, debitAccountName, creditAccountName, value, term] = entry;
+          const debitAccount = findAccountInAccountTree(accountTree, debitAccountName);
+          const creditAccount = findAccountInAccountTree(accountTree, creditAccountName);
+          if (debitAccount !== null && creditAccount !== null) {
+            const ledgerEntry: LedgerEntry = {
               date: new Date(date),
               description: description,
               data: {
-                kind: "liability",
-                debit_account,
-                credit_account,
+                kind: 'liability',
+                debitAccount,
+                creditAccount,
                 currency,
                 value: +value,
-                payment_term: new Date(term),
+                paymentTerm: new Date(term),
               },
             };
-            ledger.entries.push(ledger_entry);
+            ledger.entries.push(ledgerEntry);
           }
         }
-      } else if (ledger_type === "Exchange Ledger") {
-        for (const entry of ledger_table_entries){
+      } else if (ledgerType === 'Exchange Ledger') {
+        for (const entry of ledgerTableEntries) {
           const [
             date,
             description,
-            debit_account_name,
-            credit_account_name,
-            exchange_account_name,
-            debit_currency,
-            debit_value,
-            credit_currency,
-            credit_value,
+            debitAccountName,
+            creditAccountName,
+            exchangeAccountName,
+            debitCurrency,
+            debitValue,
+            creditCurrency,
+            creditValue,
           ] = entry;
-          const debit_account = find_account_in_account_tree(account_tree, debit_account_name);
-          const credit_account = find_account_in_account_tree(account_tree, credit_account_name);
-          const exchange_account = find_account_in_account_tree(account_tree, exchange_account_name);
-          if (debit_account !== null && credit_account !== null && exchange_account !== null) {
-            const ledger_entry: LedgerEntry = {
+          const debitAccount = findAccountInAccountTree(accountTree, debitAccountName);
+          const creditAccount = findAccountInAccountTree(accountTree, creditAccountName);
+          const exchangeAccount = findAccountInAccountTree(accountTree, exchangeAccountName);
+          if (debitAccount !== null && creditAccount !== null && exchangeAccount !== null) {
+            const ledgerEntry: LedgerEntry = {
               date: new Date(date),
               description: description,
               data: {
-                kind: "exchange",
-                debit_account,
-                credit_account,
-                exchange_account,
-                debit_currency,
-                debit_value: +debit_value,
-                credit_currency,
-                credit_value: +credit_value,
+                kind: 'exchange',
+                debitAccount,
+                creditAccount,
+                exchangeAccount,
+                debitCurrency,
+                debitValue: +debitValue,
+                creditCurrency,
+                creditValue: +creditValue,
               },
             };
-            ledger.entries.push(ledger_entry);
+            ledger.entries.push(ledgerEntry);
           }
         }
       }
     }
   }
-  ledger.entries.sort((a, b) => a.date < b.date ? -1 : 1);
+  ledger.entries.sort((a, b) => (a.date < b.date ? -1 : 1));
   return ledger;
 }
 
 type SheetsReturnType = String | Date | number;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function create_monthly_income_statement(
-  account_types: string[][],
-  account_table: string[][],
-  currencies_table: string[][],
-  ...ledger_tables: string[][][]
+function createMonthlyIncomeStatement(
+  accountTypes: string[][],
+  accountTable: string[][],
+  currenciesTable: string[][],
+  ...ledgerTables: string[][][]
 ): SheetsReturnType[][] {
-  const currencies = new Array<string>;
-  for (const currency_entry of currencies_table.filter(non_empty_row_filter)) {
-    currencies.push(currency_entry[0]);
+  const currencies: string[] = [];
+  for (const currencyEntry of currenciesTable.filter(nonEmptyRowFilter)) {
+    currencies.push(currencyEntry[0]);
   }
 
-  const ret: string[][] = [];
-  
-  const account_tree = make_account_tree(account_table, account_types);
-  
-  const ledger = make_ledger(account_tree, ledger_tables);
-  
-  const ledger_by_date = ledger.entries.map((entry) => {
-    const period = {month: entry.date.getMonth(), year: entry.date.getFullYear()};
+  const ret: SheetsReturnType[][] = [];
+
+  const accountTree = makeAccountTree(accountTable, accountTypes);
+
+  const ledger = makeLedger(accountTree, ledgerTables);
+
+  const ledgerByDate = ledger.entries.map((entry) => {
+    const period = { month: entry.date.getMonth(), year: entry.date.getFullYear() };
     return { period, entry };
   });
-  
-  const ledger_by_date_and_account = ledger_by_date.flatMap(({period, entry}) => {
+
+  const ledgerByDateAndAccount = ledgerByDate.flatMap(({ period, entry }) => {
     const kind = entry.data.kind;
-    if (kind === "default" || kind === "liability") {
-      const credit_entry: AccountEntry = {
-        account: entry.data.credit_account,
-        type: "credit",
+    if (kind === 'default' || kind === 'liability') {
+      const creditEntry: AccountEntry = {
+        account: entry.data.creditAccount,
+        type: 'credit',
         currency: entry.data.currency,
         value: entry.data.value,
       };
-      const debit_entry: AccountEntry = {
-        account: entry.data.debit_account,
-        type: "debit",
+      const debitEntry: AccountEntry = {
+        account: entry.data.debitAccount,
+        type: 'debit',
         currency: entry.data.currency,
         value: entry.data.value,
       };
-      const credit = {period, original_entry: entry, account_entry: credit_entry};
-      const debit = {period, original_entry: entry, account_entry: debit_entry};
+      const credit = { period, originalEntry: entry, accountEntry: creditEntry };
+      const debit = { period, originalEntry: entry, accountEntry: debitEntry };
       return [credit, debit];
-    } else if (kind === "exchange") {
-      const credit_entry: AccountEntry = {
-        account: entry.data.credit_account,
-        type: "credit",
-        currency: entry.data.credit_currency,
-        value: entry.data.credit_value,
+    } else if (kind === 'exchange') {
+      const creditEntry: AccountEntry = {
+        account: entry.data.creditAccount,
+        type: 'credit',
+        currency: entry.data.creditCurrency,
+        value: entry.data.creditValue,
       };
-      const debit_entry: AccountEntry = {
-        account: entry.data.debit_account,
-        type: "debit",
-        currency: entry.data.debit_currency,
-        value: entry.data.debit_value,
+      const debitEntry: AccountEntry = {
+        account: entry.data.debitAccount,
+        type: 'debit',
+        currency: entry.data.debitCurrency,
+        value: entry.data.debitValue,
       };
-      const exchange_debit_entry: AccountEntry = {
-        account: entry.data.exchange_account,
-        type: "debit",
-        currency: entry.data.credit_currency,
-        value: entry.data.credit_value,
+      const exchangeDebitEntry: AccountEntry = {
+        account: entry.data.exchangeAccount,
+        type: 'debit',
+        currency: entry.data.creditCurrency,
+        value: entry.data.creditValue,
       };
-      const exchange_credit_entry: AccountEntry = {
-        account: entry.data.exchange_account,
-        type: "credit",
-        currency: entry.data.debit_currency,
-        value: entry.data.debit_value,
+      const exchangeCreditEntry: AccountEntry = {
+        account: entry.data.exchangeAccount,
+        type: 'credit',
+        currency: entry.data.debitCurrency,
+        value: entry.data.debitValue,
       };
-      const credit = {period, original_entry: entry, account_entry: credit_entry};
-      const debit = {period, original_entry: entry, account_entry: debit_entry};
-      const exchange_credit = {period, original_entry: entry, account_entry: exchange_credit_entry};
-      const exchange_debit = {period, original_entry: entry, account_entry: exchange_debit_entry};
-      return [credit, debit, exchange_credit, exchange_debit];
+      const credit = { period, originalEntry: entry, accountEntry: creditEntry };
+      const debit = { period, originalEntry: entry, accountEntry: debitEntry };
+      const exchangeCredit = {
+        period,
+        originalEntry: entry,
+        accountEntry: exchangeCreditEntry,
+      };
+      const exchangeDebit = { period, originalEntry: entry, accountEntry: exchangeDebitEntry };
+      return [credit, debit, exchangeCredit, exchangeDebit];
     }
     return [];
   });
-  
-  const begin_date = ledger.entries[0].date;
-  const begin_month = begin_date.getMonth(); 
-  const begin_year = begin_date.getFullYear(); 
-  const begin: [number, number] = [begin_month, begin_year];
-  const end_date = ledger.entries[ledger.entries.length - 1].date;
-  const roll_over = end_date.getMonth() + 1 === 12; 
-  const end_month = roll_over ? 0 : end_date.getMonth() + 1;
-  const end_year = roll_over ? end_date.getFullYear() + 1 : end_date.getFullYear(); 
-  const end: [number, number] = [end_month, end_year];
-  
-  const months = [...generate_accounting_periods(begin, end)].reverse();
-  const transactions_by_currency_and_account = new Array<{
-    currency: string,
-    period: MonthlyAccountingPeriod,
-    account: Account,
-    account_type: RootAccountInfo,
+
+  const beginDate = ledger.entries[0].date;
+  const beginMonth = beginDate.getMonth();
+  const beginYear = beginDate.getFullYear();
+  const begin: [number, number] = [beginMonth, beginYear];
+  const endDate = ledger.entries[ledger.entries.length - 1].date;
+  const rollOver = endDate.getMonth() + 1 === 12;
+  const endMonth = rollOver ? 0 : endDate.getMonth() + 1;
+  const endYear = rollOver ? endDate.getFullYear() + 1 : endDate.getFullYear();
+  const end: [number, number] = [endMonth, endYear];
+
+  const months = [...generateAccountingPeriods(begin, end)].reverse();
+  type x = {
+    currency: string;
+    period: MonthlyAccountingPeriod;
+    account: Account;
+    accountType: RootAccountInfo;
     entries: {
       period: {
-          month: number;
-          year: number;
+        month: number;
+        year: number;
       };
-      original_entry: LedgerEntry;
-      account_entry: AccountEntry;
-    }[],
-    total: number
-  }>();
+      originalEntry: LedgerEntry;
+      accountEntry: AccountEntry;
+    }[];
+    total: number;
+  };
+  const transactionsByCurrencyAndAccount: x[] = [];
 
   for (const currency of currencies) {
-    for (const [account, account_type] of account_tree.root_accounts) {
-      pre_order_traversal(account, (acc) => {
-        const ret_entry: any[] = [acc.name];
+    for (const [account, accountType] of accountTree.rootAccounts) {
+      preOrderTraversal(account, (acc) => {
         for (const [month, year] of months) {
-          const entries = ledger_by_date_and_account.filter(({period, account_entry}) => {
-            return period.month === month
-                   && period.year === year
-                   && account_entry.currency === currency
-                   && (account_entry.account === acc || is_subaccount(acc, account_entry.account));
+          const entries = ledgerByDateAndAccount.filter(({ period, accountEntry }) => {
+            return (
+              period.month === month &&
+              period.year === year &&
+              accountEntry.currency === currency &&
+              (accountEntry.account === acc || isSubaccount(acc, accountEntry.account))
+            );
           });
           let total = 0;
-          for(const {account_entry} of entries) {
-            if (account_type.kind === "normal_credit") {
-              if (account_entry.type === "credit") {
-                total += account_entry.value;
+          for (const { accountEntry } of entries) {
+            if (accountType.kind === 'normalCredit') {
+              if (accountEntry.type === 'credit') {
+                total += accountEntry.value;
               } else {
-                total -= account_entry.value;
+                total -= accountEntry.value;
               }
             } else {
-              if (account_entry.type === "debit") {
-                total += account_entry.value;
+              if (accountEntry.type === 'debit') {
+                total += accountEntry.value;
               } else {
-                total -= account_entry.value;
+                total -= accountEntry.value;
               }
             }
           }
-          transactions_by_currency_and_account.push({currency, period: {month, year}, account: acc, account_type, entries, total})
+          transactionsByCurrencyAndAccount.push({
+            currency,
+            period: { month, year },
+            account: acc,
+            accountType,
+            entries,
+            total,
+          });
         }
       });
     }
   }
 
-  const months_header: any[] = [""];
+  const monthsHeader: SheetsReturnType[] = [''];
   for (const [month, year] of months) {
-    months_header.push(new Date(year, month))
+    monthsHeader.push(new Date(year, month));
   }
-  ret.push(months_header);
+  ret.push(monthsHeader);
 
   return ret;
 }
 
-function *generate_accounting_periods(
-  [begin_month, begin_year]: [number, number],
-  [end_month, end_year]: [number, number]
-  ): IterableIterator<[number, number]> {
-    let year = begin_year;
-    let month = begin_month;
-    while (true) {
-      yield [month, year];
-      month = month + 1;
-      if (month % 12 === 0)  {
-        month = 0;
-        year = year + 1;
-      }
-      if (year === end_year && month === end_month) {
-        break;
-      }
+function* generateAccountingPeriods(
+  [beginMonth, beginYear]: [number, number],
+  [endMonth, endYear]: [number, number],
+): IterableIterator<[number, number]> {
+  let year = beginYear;
+  let month = beginMonth;
+  while (true) {
+    yield [month, year];
+    month = month + 1;
+    if (month % 12 === 0) {
+      month = 0;
+      year = year + 1;
     }
-}
-
-function collect_account_names(account_list: string[], current_acc: string | null, account: Account) {
-  account_list.push((current_acc === null? "" : current_acc) + account.name);
-  let next_acc_prefix = current_acc === null ? "\t\t" : current_acc + "\t\t";
-  for (const children of account.children) {
-    collect_account_names(account_list, next_acc_prefix, children);
+    if (year === endYear && month === endMonth) {
+      break;
+    }
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function collectAccountNames(accountList: string[], currentAcc: string | null, account: Account) {
+  accountList.push((currentAcc === null ? '' : currentAcc) + account.name);
+  const nextAccPrefix = currentAcc === null ? '\t\t' : currentAcc + '\t\t';
+  for (const children of account.children) {
+    collectAccountNames(accountList, nextAccPrefix, children);
+  }
+}
