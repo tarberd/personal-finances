@@ -7,6 +7,10 @@ const new_root_acc = (name: string): Account => {
   return {name: name, children: []};
 }
 
+const is_subaccount = (parent: Account, child: Account): boolean => {
+  return find_account(parent, child.name) !== null;
+};
+
 type RootAccountInfo = {
   kind: "normal_credit" | "normal_debit",
   statement: "balance_sheet" | "income_statement",
@@ -321,48 +325,61 @@ function create_monthly_income_statement(
   const end_year = roll_over ? end_date.getFullYear() + 1 : end_date.getFullYear(); 
   const end: [number, number] = [end_month, end_year];
   
+  const months = [...generate_accounting_periods(begin, end)].reverse();
+  const transactions_by_currency_and_account = new Array<{
+    currency: string,
+    period: MonthlyAccountingPeriod,
+    account: Account,
+    account_type: RootAccountInfo,
+    entries: {
+      period: {
+          month: number;
+          year: number;
+      };
+      original_entry: LedgerEntry;
+      account_entry: AccountEntry;
+    }[],
+    total: number
+  }>();
+
   for (const currency of currencies) {
-    ret.push(["currency", currency]);
-    const months = [...generate_accounting_periods(begin, end)].reverse();
-    const months_header: any[] = [""];
-    for (const [month, year] of months) {
-      months_header.push(new Date(year, month))
-    }
-    ret.push(months_header);
     for (const [account, account_type] of account_tree.root_accounts) {
-      if (account_type.statement === "income_statement") {
-        pre_order_traversal(account, (acc) => {
-          const ret_entry: any[] = [acc.name];
-          for (const [month, year] of months) {
-            // const entries = ledger_by_date_and_account.entries.get(key_hash(acc, currency, key));
-            const entries = ledger_by_date_and_account.filter(({period, original_entry, account_entry}) => {
-              //TODO
-            });
-            let total = 0;
-            if(entries !== undefined) {
-              for(const entry of entries) {
-                if (account_type.kind == "normal_credit") {
-                  if (entry.type === "credit") {
-                    total += entry.value;
-                  } else {
-                    total -= entry.value;
-                  }
-                } else {
-                  if (entry.type === "debit") {
-                    total += entry.value;
-                  } else {
-                    total -= entry.value;
-                  }
-                }
+      pre_order_traversal(account, (acc) => {
+        const ret_entry: any[] = [acc.name];
+        for (const [month, year] of months) {
+          const entries = ledger_by_date_and_account.filter(({period, account_entry}) => {
+            return period.month === month
+                   && period.year === year
+                   && account_entry.currency === currency
+                   && (account_entry.account === acc || is_subaccount(acc, account_entry.account));
+          });
+          let total = 0;
+          for(const {account_entry} of entries) {
+            if (account_type.kind === "normal_credit") {
+              if (account_entry.type === "credit") {
+                total += account_entry.value;
+              } else {
+                total -= account_entry.value;
+              }
+            } else {
+              if (account_entry.type === "debit") {
+                total += account_entry.value;
+              } else {
+                total -= account_entry.value;
               }
             }
-            ret_entry.push(total);
           }
-          ret.push(ret_entry);
-        });
-      }
+          transactions_by_currency_and_account.push({currency, period: {month, year}, account: acc, account_type, entries, total})
+        }
+      });
     }
   }
+
+  const months_header: any[] = [""];
+  for (const [month, year] of months) {
+    months_header.push(new Date(year, month))
+  }
+  ret.push(months_header);
 
   return ret;
 }
