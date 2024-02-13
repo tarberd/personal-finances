@@ -23,11 +23,25 @@ type AccountTree = {
 const nonEmptyCellFilter = (cell: string): boolean => cell !== '';
 const nonEmptyRowFilter = (row: string[]): boolean => row[0] !== '';
 
-const preOrderTraversal = (account: Account, f: (account: Account) => void) => {
-  f(account);
-  for (const child of account.children) {
-    preOrderTraversal(child, f);
-  }
+const preOrderTraversalReduce = <T>(
+  account: Account,
+  accumulate: T,
+  f: (account: Account, accumulate: T) => T,
+): T => {
+  const accumulate2 = f(account, accumulate);
+  return account.children.reduce(
+    (acc, child) => preOrderTraversalReduce(child, acc, f),
+    accumulate2,
+  );
+};
+
+const preOrderTraversalMap = <T>(
+  account: Account,
+  accumulate: T,
+  f: (account: Account, accumulate: T) => T,
+): T[] => {
+  const accumulate2 = f(account, accumulate);
+  return account.children.flatMap((child) => preOrderTraversalMap(child, accumulate2, f));
 };
 
 const findAccount = (account: Account, name: string): Account | null => {
@@ -327,89 +341,104 @@ function createMonthlyIncomeStatement(
   const beginDate = ledger.entries[0].date;
   const beginMonth = beginDate.getMonth();
   const beginYear = beginDate.getFullYear();
-  const begin: [number, number] = [beginMonth, beginYear];
+  const begin = { month: beginMonth, year: beginYear };
   const endDate = ledger.entries[ledger.entries.length - 1].date;
   const rollOver = endDate.getMonth() + 1 === 12;
   const endMonth = rollOver ? 0 : endDate.getMonth() + 1;
   const endYear = rollOver ? endDate.getFullYear() + 1 : endDate.getFullYear();
-  const end: [number, number] = [endMonth, endYear];
+  const end = { month: endMonth, year: endYear };
 
   const months = [...generateAccountingPeriods(begin, end)].reverse();
+
   type x = {
     currency: string;
     period: MonthlyAccountingPeriod;
     account: Account;
     accountType: RootAccountInfo;
     entries: {
-      period: {
-        month: number;
-        year: number;
-      };
       originalEntry: LedgerEntry;
       accountEntry: AccountEntry;
     }[];
-    total: number;
   };
-  const transactionsByCurrencyAndAccount: x[] = [];
+  const transactionsByCurrencyAndAccount = currencies.flatMap((currency) =>
+    accountTree.rootAccounts.flatMap(([rootAccount, accountType]) =>
+      preOrderTraversalReduce<x[]>(rootAccount, [], (account, accumulate) => {
+        return [
+          ...months.map(({ month, year }) => {
+            const entries = ledgerByDateAndAccount.filter(({ period, accountEntry }) => {
+              return (
+                period.month === month &&
+                period.year === year &&
+                accountEntry.currency === currency &&
+                (accountEntry.account === account || isSubaccount(account, accountEntry.account))
+              );
+            });
+            return { currency, period: { month, year }, account, accountType, entries };
+          }),
+          ...accumulate,
+        ];
+      }),
+    ),
+  );
+  // let total = 0;
+  // for (const { accountEntry } of entries) {
+  // }
 
-  for (const currency of currencies) {
-    for (const [account, accountType] of accountTree.rootAccounts) {
-      preOrderTraversal(account, (acc) => {
-        for (const [month, year] of months) {
-          const entries = ledgerByDateAndAccount.filter(({ period, accountEntry }) => {
-            return (
-              period.month === month &&
-              period.year === year &&
-              accountEntry.currency === currency &&
-              (accountEntry.account === acc || isSubaccount(acc, accountEntry.account))
-            );
-          });
-          let total = 0;
-          for (const { accountEntry } of entries) {
-            if (accountType.kind === 'normalCredit') {
-              if (accountEntry.type === 'credit') {
-                total += accountEntry.value;
-              } else {
-                total -= accountEntry.value;
-              }
-            } else {
-              if (accountEntry.type === 'debit') {
-                total += accountEntry.value;
-              } else {
-                total -= accountEntry.value;
-              }
-            }
-          }
-          transactionsByCurrencyAndAccount.push({
-            currency,
-            period: { month, year },
-            account: acc,
-            accountType,
-            entries,
-            total,
-          });
-        }
-      });
-    }
-  }
+  type IncomeStatement = {
+    total_revenue: number;
+    total_expenses: number;
+  };
 
   const monthsHeader: SheetsReturnType[] = [''];
-  for (const [month, year] of months) {
+  for (const { month, year } of months) {
     monthsHeader.push(new Date(year, month));
   }
   ret.push(monthsHeader);
+
+  for (const [rootAccount] of accountTree.rootAccounts) {
+    preOrderTraversalMap(rootAccount, new String(), (parentAccount, prefix) => {
+      const accountRowEntry: SheetsReturnType[] = [];
+      accountRowEntry.push(prefix + parentAccount.name);
+      for (const { month, year } of months) {
+        const [euroEntry] = transactionsByCurrencyAndAccount.filter(
+          ({ period, account }) =>
+            month === period.month &&
+            year === period.year &&
+            (parentAccount === account || isSubaccount(parentAccount, account)),
+        );
+        const total = euroEntry.entries.reduce((total, { accountEntry }) => {
+          if (euroEntry.accountType.kind === 'normalCredit') {
+            if (accountEntry.type === 'credit') {
+              return total + accountEntry.value;
+            } else {
+              return total - accountEntry.value;
+            }
+          } else {
+            if (accountEntry.type === 'debit') {
+              return total + accountEntry.value;
+            } else {
+              return total - accountEntry.value;
+            }
+          }
+        }, 0);
+        accountRowEntry.push(total);
+      }
+      ret.push(accountRowEntry);
+      return prefix + '\t\t\t\t';
+    });
+  }
 
   return ret;
 }
 
 function* generateAccountingPeriods(
-  [beginMonth, beginYear]: [number, number],
-  [endMonth, endYear]: [number, number],
-): IterableIterator<[number, number]> {
+  { month: beginMonth, year: beginYear }: MonthlyAccountingPeriod,
+  { month: endMonth, year: endYear }: MonthlyAccountingPeriod,
+): IterableIterator<MonthlyAccountingPeriod> {
   let year = beginYear;
   let month = beginMonth;
   while (true) {
-    yield [month, year];
+    yield { month, year };
     month = month + 1;
     if (month % 12 === 0) {
       month = 0;
