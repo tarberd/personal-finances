@@ -38,10 +38,14 @@ const preOrderTraversalReduce = <T>(
 const preOrderTraversalMap = <T>(
   account: Account,
   accumulate: T,
-  f: (account: Account, accumulate: T) => T,
-): T[] => {
-  const accumulate2 = f(account, accumulate);
-  return account.children.flatMap((child) => preOrderTraversalMap(child, accumulate2, f));
+  pre_order: (account: Account, accumulate: T) => T,
+  post_order: (account: Account, accumulate: T) => T,
+): T => {
+  const accumulate2 = pre_order(account, accumulate);
+  account.children.flatMap((child) =>
+    preOrderTraversalMap(child, accumulate2, pre_order, post_order),
+  );
+  return post_order(account, accumulate2);
 };
 
 const findAccount = (account: Account, name: string): Account | null => {
@@ -380,14 +384,6 @@ function createMonthlyIncomeStatement(
       }),
     ),
   );
-  // let total = 0;
-  // for (const { accountEntry } of entries) {
-  // }
-
-  type IncomeStatement = {
-    total_revenue: number;
-    total_expenses: number;
-  };
 
   const monthsHeader: SheetsReturnType[] = [''];
   for (const { month, year } of months) {
@@ -395,38 +391,73 @@ function createMonthlyIncomeStatement(
   }
   ret.push(monthsHeader);
 
-  for (const [rootAccount] of accountTree.rootAccounts) {
-    preOrderTraversalMap(rootAccount, new String(), (parentAccount, prefix) => {
-      const accountRowEntry: SheetsReturnType[] = [];
-      accountRowEntry.push(prefix + parentAccount.name);
-      for (const { month, year } of months) {
-        const [euroEntry] = transactionsByCurrencyAndAccount.filter(
-          ({ period, account }) =>
-            month === period.month &&
-            year === period.year &&
-            (parentAccount === account || isSubaccount(parentAccount, account)),
-        );
-        const total = euroEntry.entries.reduce((total, { accountEntry }) => {
-          if (euroEntry.accountType.kind === 'normalCredit') {
-            if (accountEntry.type === 'credit') {
-              return total + accountEntry.value;
-            } else {
-              return total - accountEntry.value;
-            }
+  const revenue_account = findAccountInAccountTree(accountTree, 'revenue')!;
+  const exchange_account = findAccountInAccountTree(accountTree, 'exchange')!;
+  const liability_account = findAccountInAccountTree(accountTree, 'expenses')!;
+  const incomeStatementTotals = [revenue_account, exchange_account, liability_account].map(
+    (parentAccount) => {
+      const { totals } = preOrderTraversalMap(
+        parentAccount,
+        { prefix: '', totals: [] as Array<number> },
+        (parentAccount, { prefix }) => {
+          const totals = months.map(({ month, year }) => {
+            const [euroEntry] = transactionsByCurrencyAndAccount.filter(
+              ({ period, account, currency }) =>
+                month === period.month &&
+                year === period.year &&
+                currency === 'EUR' &&
+                parentAccount === account,
+            );
+            const total = euroEntry.entries.reduce((total, { accountEntry }) => {
+              if (euroEntry.accountType.kind === 'normalCredit') {
+                if (accountEntry.type === 'credit') {
+                  return total + accountEntry.value;
+                } else {
+                  return total - accountEntry.value;
+                }
+              } else {
+                if (accountEntry.type === 'debit') {
+                  return total + accountEntry.value;
+                } else {
+                  return total - accountEntry.value;
+                }
+              }
+            }, 0);
+            return total;
+          });
+          if (parentAccount.children.length === 0) {
+            const accountRowEntry: SheetsReturnType[] = [prefix + parentAccount.name, ...totals];
+            ret.push(accountRowEntry);
           } else {
-            if (accountEntry.type === 'debit') {
-              return total + accountEntry.value;
-            } else {
-              return total - accountEntry.value;
-            }
+            const accountRowEntry: SheetsReturnType[] = [prefix + parentAccount.name];
+            ret.push(accountRowEntry);
           }
-        }, 0);
-        accountRowEntry.push(total);
-      }
-      ret.push(accountRowEntry);
-      return prefix + '\t\t\t\t';
-    });
-  }
+          return { prefix: prefix + '\t\t\t\t', totals };
+        },
+        (parentAccount, { prefix, totals }) => {
+          if (parentAccount.children.length !== 0) {
+            const accountRowEntry: SheetsReturnType[] = [
+              prefix.replace('\t\t\t\t', '') + 'TOTAL: ' + parentAccount.name,
+              ...totals,
+            ];
+            ret.push(accountRowEntry);
+          }
+          return { prefix, totals };
+        },
+      );
+      ret.push([]);
+      return { account: parentAccount, totals };
+    },
+  );
+
+  ret.push(
+    (['Net Revenue'] as SheetsReturnType[]).concat(
+      incomeStatementTotals[0].totals.map(
+        (total, index) =>
+          total + incomeStatementTotals[1].totals[index] - incomeStatementTotals[2].totals[index],
+      ),
+    ),
+  );
 
   return ret;
 }
