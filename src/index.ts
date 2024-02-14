@@ -485,12 +485,15 @@ function createMonthlyIncomeStatement(
           currency === entryCurrency &&
           expenses_account === entryAccount,
       );
-      return (
-        revenueEntry.entriesTotal +
-        revenueEntry.subaccountEntriesTotal +
-        (exchangeEntry.entriesTotal + exchangeEntry.subaccountEntriesTotal) -
-        (expensesEntry.entriesTotal + expensesEntry.subaccountEntriesTotal)
-      );
+      return {
+        currency,
+        period,
+        netRevenue:
+          revenueEntry.entriesTotal +
+          revenueEntry.subaccountEntriesTotal +
+          (exchangeEntry.entriesTotal + exchangeEntry.subaccountEntriesTotal) -
+          (expensesEntry.entriesTotal + expensesEntry.subaccountEntriesTotal),
+      };
     }),
   );
 
