@@ -1,26 +1,23 @@
 import typescript from 'rollup-plugin-typescript2';
 import cleanup from 'rollup-plugin-cleanup';
-import license from 'rollup-plugin-license';
-import packageJson from "./package.json" assert { type: "json" };
+import { getBabelOutputPlugin } from '@rollup/plugin-babel';
+import { nodeResolve } from '@rollup/plugin-node-resolve';
 
+const extensions = ['.ts', '.js'];
 
 export default {
   input: 'src/index.ts',
   output: {
     dir: 'dist',
-    format: 'esm',
+    format: 'es',
   },
   plugins: [
     cleanup({ comments: 'none', extensions: ['.ts'] }),
-    license({
-      banner: [
-        `Name: ${packageJson.name}`,
-        `Version: ${packageJson.version}`,
-        `Description: ${packageJson.description}`,
-        `@see ${packageJson.homepage}`
-      ].join('\n'),
-    }),
     typescript(),
+    nodeResolve({ extensions }),
+    getBabelOutputPlugin({
+      presets: ['@babel/preset-env'],
+    }),
   ],
   context: 'this',
 };
