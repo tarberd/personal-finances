@@ -1,106 +1,34 @@
-import { add, eachMonthOfInterval, lastDayOfMonth } from 'date-fns';
-
-type Account = {
-  name: string;
-  children: Account[];
-};
-
-const newRootAcc = (name: string): Account => {
-  return { name: name, children: [] };
-};
-
-const isSubaccount = (parent: Account, child: Account): boolean => {
-  return findAccount(parent, child.name) !== null;
-};
-
-type RootAccountInfo = {
-  kind: 'normalCredit' | 'normalDebit';
-  statement: 'balanceSheet' | 'incomeStatement';
-};
-
-type AccountTree = {
-  rootAccounts: [Account, RootAccountInfo][];
-};
+import { add, eachMonthOfInterval } from 'date-fns';
+import {
+  Account,
+  AccountInfo,
+  AccountTree,
+  addAccountTableEntryToAccountTree,
+  findAccountInAccountTree,
+  preOrderTraversalReduce,
+} from './Account';
+import { RawEntry, Entry, processRawEntries } from './Entry';
+import { Currency } from './Currency';
 
 const nonEmptyCellFilter = (cell: string): boolean => cell !== '';
 const nonEmptyRowFilter = (row: string[]): boolean => row[0] !== '';
 
-const preOrderTraversalReduce = <T>(
-  account: Account,
-  accumulate: T,
-  f: (account: Account, accumulate: T) => T,
-): T => {
-  const accumulate2 = f(account, accumulate);
-  return account.children.reduce(
-    (acc, child) => preOrderTraversalReduce(child, acc, f),
-    accumulate2,
-  );
+type Period = {
+  begin: Date;
+  end: Date;
 };
 
-const preOrderTraversalMap = <T>(
-  account: Account,
-  accumulate: T,
-  pre_order: (account: Account, accumulate: T) => T,
-  post_order: (account: Account, accumulate: T) => T,
-): T => {
-  const accumulate2 = pre_order(account, accumulate);
-  account.children.flatMap((child) =>
-    preOrderTraversalMap(child, accumulate2, pre_order, post_order),
-  );
-  return post_order(account, accumulate2);
-};
+const makeMonthlyAccountingPeriods = (ledger: Entry[]): Period[] =>
+  eachMonthOfInterval({
+    start: ledger[0].date,
+    end: add(ledger[ledger.length - 1].date, { months: 1 }),
+  }).map((firstDate) => ({
+    begin: firstDate,
+    end: add(firstDate, { months: 1 }),
+  }));
 
-const findAccount = (account: Account, name: string): Account | null => {
-  for (const child of account.children) {
-    if (child.name === name) {
-      return child;
-    } else {
-      const acc = findAccount(child, name);
-      if (acc !== null) {
-        return acc;
-      }
-    }
-  }
-  return null;
-};
-
-const findAccountInAccountTree = (accountTree: AccountTree, name: string): Account | null => {
-  for (const [account] of accountTree.rootAccounts) {
-    if (account.name === name) {
-      return account;
-    } else {
-      const acc = findAccount(account, name);
-      if (acc !== null) {
-        return acc;
-      }
-    }
-  }
-  return null;
-};
-
-function addAccountTableEntryToAccount(account: Account, accountTableEntry: string[]) {
-  if (accountTableEntry.length === 0) {
-    return;
-  }
-  const newAccountName = accountTableEntry[0];
-  const entry = account.children.find((acc) => acc.name === newAccountName);
-  if (entry === undefined) {
-    const newAccount = newRootAcc(newAccountName);
-    addAccountTableEntryToAccount(newAccount, accountTableEntry.slice(1));
-    account.children.push(newAccount);
-  } else {
-    addAccountTableEntryToAccount(entry, accountTableEntry.slice(1));
-  }
-}
-
-function addAccountTableEntryToAccountTree(accountTree: AccountTree, accountTableEntry: string[]) {
-  const maybe = accountTree.rootAccounts.find(([acc]) => acc.name === accountTableEntry.at(0));
-  if (maybe === undefined) {
-    return;
-  }
-  const [account] = maybe;
-  addAccountTableEntryToAccount(account, accountTableEntry.slice(1));
-}
+const makeCurrencies = (currenciesTable: string[][]): Currency[] =>
+  currenciesTable.filter(nonEmptyRowFilter).map((row) => row[0]);
 
 function makeAccountTree(accountTable: SheetsTable, accountTypes: SheetsTable): AccountTree {
   const accountTree: AccountTree = {
@@ -113,68 +41,23 @@ function makeAccountTree(accountTable: SheetsTable, accountTypes: SheetsTable): 
       accountNormality === 'Credit' ? 'normalCredit' : 'normalDebit';
     const statement: 'balanceSheet' | 'incomeStatement' =
       isPartOfNetRevenue === 'Yes' ? 'incomeStatement' : 'balanceSheet';
-    accountTree.rootAccounts.push([newRootAcc(rootAccName), { kind: kind, statement: statement }]);
+    accountTree.rootAccounts.push({
+      name: rootAccName,
+      info: { kind: kind, statement: statement },
+      children: [],
+    });
   }
-
   for (const accountTableEntry of accountTable.filter(nonEmptyRowFilter)) {
     addAccountTableEntryToAccountTree(accountTree, accountTableEntry.filter(nonEmptyCellFilter));
   }
   return accountTree;
 }
 
-type RawEntry = {
-  date: Date;
-  description: string;
-  data:
-    | {
-        kind: 'default';
-        debitAccount: Account;
-        creditAccount: Account;
-        currency: Currency;
-        value: number;
-      }
-    | {
-        kind: 'liability';
-        debitAccount: Account;
-        creditAccount: Account;
-        currency: Currency;
-        value: number;
-        paymentTerm: Date;
-      }
-    | {
-        kind: 'exchange';
-        debitAccount: Account;
-        creditAccount: Account;
-        exchangeAccount: Account;
-        debitValue: number;
-        debitCurrency: Currency;
-        creditValue: number;
-        creditCurrency: Currency;
-      };
-};
-
-type Entry = {
-  account: Account;
-  date: Date;
-  type: 'debit' | 'credit';
-  currency: Currency;
-  value: number;
-  metadata: {
-    originalEntry: RawEntry;
-  };
-};
-
-type Period = {
-  begin: Date;
-  end: Date;
-};
-
 function parseLedgerTablesFromSheets(
   accountTree: AccountTree,
   ledgerTables: string[][][],
 ): RawEntry[] {
   const ledger: RawEntry[] = [];
-
   for (const ledgerTable of ledgerTables) {
     const ledgerTableEntries = ledgerTable.filter(nonEmptyRowFilter).values();
     const header = ledgerTableEntries.next();
@@ -263,28 +146,14 @@ function parseLedgerTablesFromSheets(
   return ledger;
 }
 
-type Currency = string;
-function makeCurrencies(currenciesTable: string[][]): Currency[] {
-  return currenciesTable.filter(nonEmptyRowFilter).map((row) => row[0]);
-}
-
 type AccountMonthlyLedger = {
   currency: string;
   period: Period;
   account: Account;
-  accountType: RootAccountInfo;
+  accountType: AccountInfo;
   entries: Entry[];
   subaccountEntries: Entry[];
 };
-
-const makeMonthlyAccountingPeriods = (ledger: RawEntry[]): Period[] =>
-  eachMonthOfInterval({
-    start: ledger[0].date,
-    end: add(ledger[ledger.length - 1].date, { months: 1 }),
-  }).map((firstDate) => ({
-    begin: firstDate,
-    end: add(firstDate, { months: 1 }),
-  }));
 
 // function makeAccountMonthlyLedgers(
 //   accountTree: AccountTree,
@@ -295,7 +164,6 @@ const makeMonthlyAccountingPeriods = (ledger: RawEntry[]): Period[] =>
 //     const period = { month: entry.date.getMonth(), year: entry.date.getFullYear() };
 //     return { period, entry };
 //   });
-
 //   const ledgerByDateAndAccount = ledgerByDate.flatMap(({ period, entry }) => {
 //     const kind = entry.data.kind;
 //     if (kind === 'default' || kind === 'liability') {
@@ -351,9 +219,7 @@ const makeMonthlyAccountingPeriods = (ledger: RawEntry[]): Period[] =>
 //     }
 //     return [];
 //   });
-
 //   const months = makeMonthlyAccountingPeriods(ledger);
-
 //   const transactionsByCurrencyAndAccount = currencies.flatMap((currency) =>
 //     accountTree.rootAccounts.flatMap(([rootAccount, accountType]) =>
 //       preOrderTraversalReduce<AccountMonthlyLedger[]>(rootAccount, [], (account, accumulate) => {
@@ -396,154 +262,6 @@ type SheetsReturnType = String | Date | number;
 type SheetsTable = string[][];
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function createMonthlyBalanceSheet(
-  accountTypes: SheetsTable,
-  accountTable: SheetsTable,
-  currenciesTable: SheetsTable,
-  ...ledgerTables: SheetsTable[]
-): SheetsReturnType[][] {
-  const currencies = makeCurrencies(currenciesTable);
-  const accountTree = makeAccountTree(accountTable, accountTypes);
-  const rawEntries = parseLedgerTablesFromSheets(accountTree, ledgerTables);
-  // const entries = rawEntries.flatMap(processRawEntry);
-  // use date libraries, and/or list manipulation ones(groupBy)
-
-  // TBH this should be just an inline filter/groupBy, no function created
-  // groupBy currency, account and MONTH .groupBy(x => x.currency).map(x => x.groupBy(y => y.date.getMonth()))
-  // const transactionsByCurrencyAndAccount = makeAccountMonthlyLedgers(
-  //   accountTree,
-  //   ledger,
-  //   currencies,
-  // );
-  // type AccountMonthlyLedgerWithTotals = AccountMonthlyLedger & {
-  //   entriesTotal: number;
-  //   subaccountEntriesTotal: number;
-  // };
-  // const months = makeMonthlyAccountingPeriods(ledger);
-  // const incomeStatementTotals = accountTree.rootAccounts
-  //   .map((rootAccount) => rootAccount[0])
-  //   .flatMap((parentAccount) =>
-  //     preOrderTraversalReduce<AccountMonthlyLedgerWithTotals[]>(
-  //       parentAccount,
-  //       [],
-  //       (account, accumulate) => {
-  //         const totals = months.flatMap(({ month, year }) => {
-  //           return currencies.flatMap((currency) => {
-  //             const [filteredEntry] = transactionsByCurrencyAndAccount.filter(
-  //               ({ period, account: entryAccount, currency: entryCurrency }) =>
-  //                 month === period.month &&
-  //                 year === period.year &&
-  //                 currency === entryCurrency &&
-  //                 account === entryAccount,
-  //             );
-  //             const reduceEntriesTotal = (total: number, entry: LedgerAndAccountEntry) => {
-  //               if (filteredEntry.accountType.kind === 'normalCredit') {
-  //                 if (entry.accountEntry.type === 'credit') {
-  //                   return total + entry.accountEntry.value;
-  //                 } else {
-  //                   return total - entry.accountEntry.value;
-  //                 }
-  //               } else {
-  //                 if (entry.accountEntry.type === 'debit') {
-  //                   return total + entry.accountEntry.value;
-  //                 } else {
-  //                   return total - entry.accountEntry.value;
-  //                 }
-  //               }
-  //             };
-  //             const entriesTotal = filteredEntry.entries.reduce(reduceEntriesTotal, 0);
-  //             const subaccountEntriesTotal = filteredEntry.subaccountEntries.reduce(
-  //               reduceEntriesTotal,
-  //               0,
-  //             );
-  //             return {
-  //               ...filteredEntry,
-  //               entriesTotal,
-  //               subaccountEntriesTotal,
-  //             } as AccountMonthlyLedgerWithTotals;
-  //           });
-  //         });
-  //         return [...accumulate, ...totals];
-  //       },
-  //     ),
-  //   );
-  return [];
-}
-
-const processRawEntries = (rawEntries: RawEntry[]): Entry[] =>
-  rawEntries.flatMap((rawEntry) => {
-    const kind = rawEntry.data.kind;
-    if (kind === 'default' || kind === 'liability') {
-      return [
-        {
-          account: rawEntry.data.creditAccount,
-          date: rawEntry.date,
-          type: 'credit',
-          currency: rawEntry.data.currency,
-          value: rawEntry.data.value,
-          metadata: {
-            originalEntry: rawEntry,
-          },
-        },
-        {
-          account: rawEntry.data.debitAccount,
-          date: rawEntry.date,
-          type: 'debit',
-          currency: rawEntry.data.currency,
-          value: rawEntry.data.value,
-          metadata: {
-            originalEntry: rawEntry,
-          },
-        },
-      ];
-    } else if (kind === 'exchange') {
-      return [
-        {
-          account: rawEntry.data.creditAccount,
-          date: rawEntry.date,
-          type: 'credit',
-          currency: rawEntry.data.creditCurrency,
-          value: rawEntry.data.creditValue,
-          metadata: {
-            originalEntry: rawEntry,
-          },
-        },
-        {
-          account: rawEntry.data.debitAccount,
-          date: rawEntry.date,
-          type: 'debit',
-          currency: rawEntry.data.debitCurrency,
-          value: rawEntry.data.debitValue,
-          metadata: {
-            originalEntry: rawEntry,
-          },
-        },
-        {
-          account: rawEntry.data.exchangeAccount,
-          date: rawEntry.date,
-          type: 'debit',
-          currency: rawEntry.data.creditCurrency,
-          value: rawEntry.data.creditValue,
-          metadata: {
-            originalEntry: rawEntry,
-          },
-        },
-        {
-          account: rawEntry.data.exchangeAccount,
-          date: rawEntry.date,
-          type: 'credit',
-          currency: rawEntry.data.debitCurrency,
-          value: rawEntry.data.debitValue,
-          metadata: {
-            originalEntry: rawEntry,
-          },
-        },
-      ];
-    }
-    return [];
-  });
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function createMonthlyIncomeStatement(
   accountTypes: SheetsTable,
   accountTable: SheetsTable,
@@ -554,14 +272,22 @@ function createMonthlyIncomeStatement(
   const accountTree = makeAccountTree(accountTable, accountTypes);
   const rawEntries = parseLedgerTablesFromSheets(accountTree, ledgerTables);
   const entries = processRawEntries(rawEntries);
+  //   use date libraries, and/or list manipulation ones(groupBy)
 
-  const stuff = Object.entries(Object.groupBy(entries, ({ account }) => account.name)).flatMap(
-    ([accountName, value]) =>
-      Object.entries(Object.groupBy(value!, (item) => item.currency)).flatMap(
-        ([currencyName, entries]) =>
-          entries?.map((item) => ({ ...item, currencyName, accountName })),
-      ),
-  );
+  // preOrderTraversalReduce()
+  // entries.filter((entry) => {
+  //   return true;
+  // });
+  //   TBH this should be just an inline filter/groupBy, no function created
+  //   groupBy currency, account and MONTH .groupBy(x => x.currency).map(x => x.groupBy(y => y.date.getMonth()))
+
+  // const stuff = Object.entries(Object.groupBy(entries, ({ account }) => account.name)).flatMap(
+  //   ([accountName, value]) =>
+  //     Object.entries(Object.groupBy(value!, (item) => item.currency)).flatMap(
+  //       ([currencyName, entries]) =>
+  //         entries?.map((item) => ({ ...item, currencyName, accountName })),
+  //     ),
+  // );
   // TBH this should be just an inline filter/groupBy, no function created
   // groupBy currency, account and MONTH .groupBy(x => x.currency).map(x => x.groupBy(y => y.date.getMonth()))
   // const transactionsByCurrencyAndAccount = makeAccountMonthlyLedgers(
@@ -581,7 +307,7 @@ function createMonthlyIncomeStatement(
   // const expenses_account = findAccountInAccountTree(accountTree, 'expenses')!;
   // const incomeStatementAccounts = [revenue_account, exchange_account, expenses_account];
 
-  const months = makeMonthlyAccountingPeriods(ledger).reverse();
+  const months = makeMonthlyAccountingPeriods(entries).reverse();
 
   const ret: SheetsReturnType[][] = months.map(({ begin, end }) => [begin, end]);
   // type AccountMonthlyLedgerWithTotals = AccountMonthlyLedger & {
