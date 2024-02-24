@@ -17,16 +17,18 @@ export const isSubaccount = (parent: Account, child: Account): boolean => {
   return findAccount(parent, child.name) !== null;
 };
 
-export const preOrderTraversalReduce = <T>(
+export const AccountTraversalRecuce = <T>(
   account: Account,
   accumulate: T,
-  f: (account: Account, accumulate: T) => T,
+  pre: (account: Account, accumulate: T) => T,
+  post: (account: Account, accumulate: T) => T,
 ): T => {
-  const accumulate2 = f(account, accumulate);
-  return account.children.reduce(
-    (acc, child) => preOrderTraversalReduce(child, acc, f),
+  const accumulate2 = pre(account, accumulate);
+  const accumulate3 = account.children.reduce(
+    (acc, child) => AccountTraversalRecuce(child, acc, pre, post),
     accumulate2,
   );
+  return post(account, accumulate3);
 };
 
 export const preOrderTraversalMap = <T>(
