@@ -28,7 +28,7 @@ const isDateLessThanPeriod = (date: Date, period: Period): boolean => date < per
 const makeMonthlyAccountingPeriods = (ledger: Entry[]): Period[] =>
   eachMonthOfInterval({
     start: ledger[0].date,
-    end: add(ledger[ledger.length - 1].date, { months: 1 }),
+    end: ledger[ledger.length - 1].date,
   }).map((firstDate) => ({
     begin: firstDate,
     end: add(firstDate, { months: 1 }),
@@ -57,6 +57,12 @@ function makeAccountTree(accountTable: SheetsTable, accountTypes: SheetsTable): 
   for (const accountTableEntry of accountTable.filter(nonEmptyRowFilter)) {
     addAccountTableEntryToAccountTree(accountTree, accountTableEntry.filter(nonEmptyCellFilter));
   }
+  addAccountTableEntryToAccountTree(accountTree, ['equity', 'Retained Earnings']);
+  const retainedEarningsAccount = findAccountInAccountTree(accountTree, 'Retained Earnings')!;
+  const result = accountTree.rootAccounts.filter(
+    ({ info }) => info.statement === 'incomeStatement',
+  );
+  retainedEarningsAccount.children.push(...result);
   return accountTree;
 }
 
@@ -324,74 +330,13 @@ function createMonthlyBalanceSheet(
   currenciesTable: SheetsTable,
   ...ledgerTables: SheetsTable[]
 ): SheetsReturnType[][] {
+  const incomeStatementTable: SheetsReturnType[][] = [];
   const currencies = makeCurrencies(currenciesTable);
   const accountTree = makeAccountTree(accountTable, accountTypes);
   const rawEntries = parseLedgerTablesFromSheets(accountTree, ledgerTables);
   const entries = processRawEntries(rawEntries);
 
   const accountingPeriods = makeMonthlyAccountingPeriods(entries).reverse();
-
-  const equity = findAccountInAccountTree(accountTree, 'equity')!;
-  equity.children.push(
-    {
-      name: 'Retained Earnings',
-      info: {
-        kind: 'normalCredit',
-        statement: 'balanceSheet',
-      },
-      children: [],
-    },
-    {
-      name: 'Net Revenue',
-      info: {
-        kind: 'normalCredit',
-        statement: 'balanceSheet',
-      },
-      children: [],
-    },
-  );
-  const netRevenueAccount = findAccountInAccountTree(accountTree, 'Net Revenue')!;
-
-  const incomeStatementAccounts = accountTree.rootAccounts.filter(
-    (account) => account.info.statement === 'incomeStatement',
-  );
-
-  const byAccount = accountTotalsByPeriodAndCurrency(
-    incomeStatementAccounts,
-    accountingPeriods,
-    currencies,
-    entries,
-  );
-
-  const revenue_account = findAccountInAccountTree(accountTree, 'revenue')!;
-  const exchange_account = findAccountInAccountTree(accountTree, 'exchange')!;
-  const expenses_account = findAccountInAccountTree(accountTree, 'expenses')!;
-  const totalsRevenue = byAccount.find(({ account: toFind }) => revenue_account === toFind)!.totals;
-  const totalsExchange = byAccount.find(
-    ({ account: toFind }) => exchange_account === toFind,
-  )!.totals;
-  const totalsExpenses = byAccount.find(
-    ({ account: toFind }) => expenses_account === toFind,
-  )!.totals;
-  const netRevenue: AccountTotalByPeriod = new Map();
-  for (const period of accountingPeriods) {
-    const byCurrency: AccountTotalByCurrency = new Map();
-    for (const currency of currencies) {
-      const { totalAccount: revenue1, totalSubaccount: revenue2 } = totalsRevenue
-        .get(period)!
-        .get(currency)!;
-      const { totalAccount: expenses1, totalSubaccount: expenses2 } = totalsExpenses
-        .get(period)!
-        .get(currency)!;
-      const { totalAccount: exchange1, totalSubaccount: exchange2 } = totalsExchange
-        .get(period)!
-        .get(currency)!;
-      const totalAccount = revenue1 + exchange1 - expenses1;
-      const totalSubaccount = revenue2 + exchange2 - expenses2;
-      byCurrency.set(currency, { totalAccount, totalSubaccount });
-    }
-    netRevenue.set(period, byCurrency);
-  }
 
   const balanceSheetAccounts = accountTree.rootAccounts.filter(
     (account) => account.info.statement === 'balanceSheet',
@@ -452,12 +397,6 @@ function createMonthlyBalanceSheet(
     [] as AccountTotals[],
   );
 
-  byAccountAccumulated.push({
-    account: netRevenueAccount,
-    totals: netRevenue,
-  });
-
-  const incomeStatementTable: SheetsReturnType[][] = [];
   const currenciesHeader: SheetsReturnType[] = [''];
   const periodsHeader: SheetsReturnType[] = [''];
   for (const { begin } of accountingPeriods) {
@@ -494,33 +433,54 @@ function createMonthlyBalanceSheet(
       account,
       '',
       (account, prefix) => {
+        if (account.info.statement !== 'balanceSheet') {
+          return prefix;
+        }
         const table_entry: SheetsReturnType[] = [];
         table_entry.push(prefix + account.name);
-        const totals = byAccountAccumulated.find(
-          ({ account: toFind }) => toFind === account,
-        )!.totals;
-        for (const period of accountingPeriods) {
-          for (const currency of currencies) {
-            table_entry.push(totals.get(period)!.get(currency)!.totalAccount);
-          }
-        }
-        incomeStatementTable.push(table_entry);
-        return prefix + '\t\t\t\t';
-      },
-      (account, prefix) => {
-        if (account.children.length !== 0) {
-          const table_entry: SheetsReturnType[] = [];
-          table_entry.push(prefix.replace('\t\t\t\t', '') + 'TOTAL: ' + account.name);
-          const totals = byAccountAccumulated.find(
-            ({ account: toFind }) => toFind === account,
-          )!.totals;
+        const totals = byAccountAccumulated.find(({ account: toFind }) => toFind === account);
+        if (totals === undefined) {
+          incomeStatementTable.push(['error acount has no entry', account.name]);
+        } else {
           for (const period of accountingPeriods) {
             for (const currency of currencies) {
-              const { totalAccount, totalSubaccount } = totals.get(period)!.get(currency)!;
-              table_entry.push(totalAccount + totalSubaccount);
+              const { totalAccount, totalSubaccount } = totals.totals.get(period)!.get(currency)!;
+              if (
+                account.children.find((account) => account.info.statement === 'balanceSheet') !==
+                undefined
+              ) {
+                table_entry.push(totalAccount);
+              } else {
+                table_entry.push(totalAccount + totalSubaccount);
+              }
             }
           }
           incomeStatementTable.push(table_entry);
+        }
+        return prefix + '\t\t\t\t';
+      },
+      (account, prefix) => {
+        if (account.info.statement !== 'balanceSheet') {
+          return prefix;
+        }
+        if (
+          account.children.find((account) => account.info.statement === 'balanceSheet') !==
+          undefined
+        ) {
+          const table_entry: SheetsReturnType[] = [];
+          table_entry.push(prefix.replace('\t\t\t\t', '') + 'TOTAL: ' + account.name);
+          const totals = byAccountAccumulated.find(({ account: toFind }) => toFind === account);
+          if (totals === undefined) {
+            incomeStatementTable.push(['error aacount has no entry', account.name]);
+          } else {
+            for (const period of accountingPeriods) {
+              for (const currency of currencies) {
+                const { totalAccount, totalSubaccount } = totals.totals.get(period)!.get(currency)!;
+                table_entry.push(totalAccount + totalSubaccount);
+              }
+            }
+            incomeStatementTable.push(table_entry);
+          }
         }
         return prefix.replace('\t\t\t\t', '');
       },
