@@ -1,7 +1,6 @@
 import { add, eachMonthOfInterval } from 'date-fns';
 import {
   Account,
-  AccountInfo,
   AccountTree,
   addAccountTableEntryToAccountTree,
   findAccountInAccountTree,
@@ -486,6 +485,289 @@ function createMonthlyBalanceSheet(
       },
     );
   }
-  incomeStatementTable.push(['test']);
   return incomeStatementTable;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function createMonthlyBudgetTable(
+  accountTypes: SheetsTable,
+  accountTable: SheetsTable,
+): SheetsReturnType[][] {
+  const accountTree = makeAccountTree(accountTable, accountTypes);
+  const liabilitiesAccounts = accountTree.rootAccounts.filter(
+    (account) => account.name === 'liabilities',
+  );
+  const expensesAccounts = accountTree.rootAccounts.filter(
+    (account) => account.name === 'expenses',
+  );
+  const budgetTable: SheetsReturnType[][] = [];
+  for (const account of liabilitiesAccounts.concat(expensesAccounts)) {
+    preOrderTraversalMap<string>(
+      account,
+      '',
+      (account, prefix) => {
+        budgetTable.push([prefix + account.name]);
+        return prefix + '\t\t\t\t';
+      },
+      (account, prefix) => {
+        return prefix.replace('\t\t\t\t', '');
+      },
+    );
+  }
+  return budgetTable;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function createMonthlyBudgetReviewTable(
+  accountTypes: SheetsTable,
+  accountTable: SheetsTable,
+  currenciesTable: SheetsTable,
+  budgetTable: SheetsTable,
+  ...ledgerTables: SheetsTable[]
+): SheetsReturnType[][] {
+  const currencies = makeCurrencies(currenciesTable);
+  const accountTree = makeAccountTree(accountTable, accountTypes);
+  const rawEntries = parseLedgerTablesFromSheets(accountTree, ledgerTables);
+  const entries = processRawEntries(rawEntries);
+
+  const budgetPeriods: Period[] = [];
+  const budgetTableValues = budgetTable.filter(nonEmptyRowFilter).values();
+  const budgetMonthsHeader = budgetTableValues.next();
+  if (budgetMonthsHeader.done === false) {
+    const monthsInHeader = budgetMonthsHeader.value.filter(nonEmptyCellFilter).values();
+    monthsInHeader.next();
+    for (const month of monthsInHeader) {
+      const begin = new Date(month);
+      budgetPeriods.push({ begin, end: add(begin, { months: 1 }) });
+    }
+  }
+
+  const budgetByAccount: Map<Account, Map<Period, number>> = new Map();
+  for (const entry of budgetTableValues) {
+    const values = entry.values();
+    const dirtyAccountName = values.next();
+    if (dirtyAccountName.done === false) {
+      const account = findAccountInAccountTree(accountTree, dirtyAccountName.value.trimStart());
+      if (account !== null) {
+        const budgetByPeriod: Map<Period, number> = new Map();
+        for (const period of budgetPeriods) {
+          const value = values.next();
+          let budget_value = 0;
+          if (value.done === false) {
+            budget_value = +value.value;
+          }
+          budgetByPeriod.set(period, budget_value);
+        }
+        budgetByAccount.set(account, budgetByPeriod);
+      }
+    }
+  }
+
+  const liabilitiesAccounts = accountTree.rootAccounts.filter(
+    (account) => account.name === 'liabilities',
+  );
+  const expensesAccounts = accountTree.rootAccounts.filter(
+    (account) => account.name === 'expenses',
+  );
+
+  type LiabilityTotals = {
+    totalBorowed: number;
+    totalPayed: number;
+  };
+
+  const totalByAccountOnTerm = liabilitiesAccounts.concat(expensesAccounts).reduce(
+    (list, account) =>
+      AccountTraversalReduce(
+        account,
+        list,
+        (account, list) => {
+          const byPeriod: Map<Period, Map<Currency, LiabilityTotals>> = new Map();
+          for (const period of budgetPeriods) {
+            const byCurrency: Map<Currency, LiabilityTotals> = new Map();
+            for (const currency of currencies) {
+              const creditEntries = entries.filter((entry) =>
+                entry.term !== undefined
+                  ? entry.account === account &&
+                    entry.type === 'credit' &&
+                    isDateWithinPeriod(entry.term, period) &&
+                    entry.currency === currency
+                  : false,
+              );
+              const debitEntries = entries.filter((entry) =>
+                entry.term !== undefined
+                  ? entry.account === account &&
+                    entry.type === 'debit' &&
+                    isDateWithinPeriod(entry.term, period) &&
+                    entry.currency === currency
+                  : false,
+              );
+              const reduceEntriesTotal = (total: number, entry: Entry): number => {
+                if (account.info.kind === 'normalCredit') {
+                  if (entry.type === 'credit') {
+                    return total + entry.value;
+                  } else {
+                    return total - entry.value;
+                  }
+                } else {
+                  if (entry.type === 'credit') {
+                    return total + entry.value;
+                  } else {
+                    return total - entry.value;
+                  }
+                }
+              };
+              const total_credit = creditEntries.reduce(reduceEntriesTotal, 0);
+              const total_debit = debitEntries.reduce(reduceEntriesTotal, 0);
+              byCurrency.set(currency, { totalBorowed: total_credit, totalPayed: total_debit });
+            }
+            byPeriod.set(period, byCurrency);
+          }
+          return [...list, { account, totals: byPeriod }];
+        },
+        (account, acc) => {
+          return acc;
+        },
+      ),
+    [] as { account: Account; totals: Map<Period, Map<Currency, LiabilityTotals>> }[],
+  );
+
+  const totalByAccount = liabilitiesAccounts.concat(expensesAccounts).reduce(
+    (list, account) =>
+      AccountTraversalReduce(
+        account,
+        list,
+        (account, list) => {
+          const byPeriod: Map<Period, Map<Currency, LiabilityTotals>> = new Map();
+          for (const period of budgetPeriods) {
+            const byCurrency: Map<Currency, LiabilityTotals> = new Map();
+            for (const currency of currencies) {
+              const creditEntries = entries.filter((entry) =>
+                entry.term === undefined
+                  ? entry.account === account &&
+                    entry.type === 'credit' &&
+                    isDateWithinPeriod(entry.date, period) &&
+                    entry.currency === currency
+                  : false,
+              );
+              const debitEntries = entries.filter((entry) =>
+                entry.term === undefined
+                  ? entry.account === account &&
+                    entry.type === 'debit' &&
+                    isDateWithinPeriod(entry.date, period) &&
+                    entry.currency === currency
+                  : false,
+              );
+              const reduceEntriesTotal = (total: number, entry: Entry): number => {
+                if (account.info.kind === 'normalCredit') {
+                  if (entry.type === 'credit') {
+                    return total + entry.value;
+                  } else {
+                    return total - entry.value;
+                  }
+                } else {
+                  if (entry.type === 'credit') {
+                    return total + entry.value;
+                  } else {
+                    return total - entry.value;
+                  }
+                }
+              };
+              const total_credit = creditEntries.reduce(reduceEntriesTotal, 0);
+              const total_debit = debitEntries.reduce(reduceEntriesTotal, 0);
+              byCurrency.set(currency, { totalBorowed: total_credit, totalPayed: total_debit });
+            }
+            byPeriod.set(period, byCurrency);
+          }
+          return [...list, { account, totals: byPeriod }];
+        },
+        (account, acc) => {
+          return acc;
+        },
+      ),
+    [] as { account: Account; totals: Map<Period, Map<Currency, LiabilityTotals>> }[],
+  );
+
+  const ret: SheetsReturnType[][] = [];
+
+  const header1: SheetsReturnType[] = ['Ready to Assign'];
+  const readyToAssign = 0;
+  const header2: SheetsReturnType[] = [readyToAssign];
+  for (const period of budgetPeriods) {
+    header1.push(period.begin, period.begin, period.begin, period.begin, period.begin);
+    header2.push('Budgeted', 'Borrowed', 'Target', 'Activity', 'Available');
+  }
+  ret.push(header1, header2);
+  for (const account of liabilitiesAccounts) {
+    preOrderTraversalMap<string>(
+      account,
+      '',
+      (account, prefix) => {
+        const tableEntry: SheetsReturnType[] = [prefix + account.name];
+        const budgetByPeriod = budgetByAccount.get(account);
+        const executedByPeriod = totalByAccountOnTerm.find(
+          ({ account: toFind }) => account === toFind,
+        );
+        if (budgetByPeriod !== undefined && executedByPeriod !== undefined) {
+          for (const period of budgetPeriods) {
+            const value = budgetByPeriod.get(period);
+            if (value !== undefined) {
+              const target = executedByPeriod.totals.get(period)!.get('BRL')!.totalBorowed;
+              const activity = -executedByPeriod.totals.get(period)!.get('BRL')!.totalPayed;
+              const borrowed = 0;
+              tableEntry.push(value, borrowed, target, activity, value + borrowed - activity);
+            } else {
+              tableEntry.push('period undefined');
+            }
+          }
+        } else {
+          tableEntry.push('account undefined');
+        }
+        ret.push(tableEntry);
+        return prefix + '\t\t\t\t';
+      },
+      (account, prefix) => {
+        return prefix.replace('\t\t\t\t', '');
+      },
+    );
+  }
+  for (const account of expensesAccounts) {
+    preOrderTraversalMap<string>(
+      account,
+      '',
+      (account, prefix) => {
+        const tableEntry: SheetsReturnType[] = [prefix + account.name];
+        const budgetByPeriod = budgetByAccount.get(account);
+        const executedByPeriodOnTerm = totalByAccountOnTerm.find(
+          ({ account: toFind }) => account === toFind,
+        );
+        const executedByPeriod = totalByAccount.find(({ account: toFind }) => account === toFind);
+        if (
+          budgetByPeriod !== undefined &&
+          executedByPeriodOnTerm !== undefined &&
+          executedByPeriod !== undefined
+        ) {
+          for (const period of budgetPeriods) {
+            const value = budgetByPeriod.get(period);
+            if (value !== undefined) {
+              const borrowed = executedByPeriodOnTerm.totals.get(period)!.get('EUR')!.totalBorowed;
+              const target = 0;
+              const activity =
+                borrowed + executedByPeriod.totals.get(period)!.get('EUR')!.totalPayed;
+              tableEntry.push(value, borrowed, target, activity, value + borrowed - activity);
+            } else {
+              tableEntry.push('period undefined');
+            }
+          }
+        } else {
+          tableEntry.push('account undefined');
+        }
+        ret.push(tableEntry);
+        return prefix + '\t\t\t\t';
+      },
+      (account, prefix) => {
+        return prefix.replace('\t\t\t\t', '');
+      },
+    );
+  }
+  return ret;
 }

@@ -35,6 +35,7 @@ export type RawEntry = {
 export type Entry = {
   account: Account;
   date: Date;
+  term?: Date;
   type: 'debit' | 'credit';
   currency: Currency;
   value: number;
@@ -46,7 +47,7 @@ export type Entry = {
 export const processRawEntries = (rawEntries: RawEntry[]): Entry[] =>
   rawEntries.flatMap((rawEntry) => {
     const kind = rawEntry.data.kind;
-    if (kind === 'default' || kind === 'liability') {
+    if (kind === 'default') {
       return [
         {
           account: rawEntry.data.creditAccount,
@@ -61,6 +62,31 @@ export const processRawEntries = (rawEntries: RawEntry[]): Entry[] =>
         {
           account: rawEntry.data.debitAccount,
           date: rawEntry.date,
+          type: 'debit',
+          currency: rawEntry.data.currency,
+          value: rawEntry.data.value,
+          metadata: {
+            originalEntry: rawEntry,
+          },
+        },
+      ];
+    } else if (kind === 'liability') {
+      return [
+        {
+          account: rawEntry.data.creditAccount,
+          date: rawEntry.date,
+          term: rawEntry.data.paymentTerm,
+          type: 'credit',
+          currency: rawEntry.data.currency,
+          value: rawEntry.data.value,
+          metadata: {
+            originalEntry: rawEntry,
+          },
+        },
+        {
+          account: rawEntry.data.debitAccount,
+          date: rawEntry.date,
+          term: rawEntry.data.paymentTerm,
           type: 'debit',
           currency: rawEntry.data.currency,
           value: rawEntry.data.value,
